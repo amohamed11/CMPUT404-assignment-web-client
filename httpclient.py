@@ -24,8 +24,10 @@ import re
 # you may use urllib to encode data appropriately
 import urllib.parse
 import json
+import ssl
 
-PORT = 80
+HTTP_PORT = 80
+HTTPS_PORT = 443
 
 NOT_FOUND = 404
 BAD_GATEWAY = 504
@@ -50,7 +52,7 @@ class HTTPResponse(object):
 
 class HTTPClient(object):
     def get_host_port(self, url):
-        port = PORT
+        port = HTTP_PORT
         urlSplit = url.split(":")
         if len(urlSplit) > 1:
             port = int(urlSplit[1])
@@ -62,6 +64,9 @@ class HTTPClient(object):
             return NOT_FOUND
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((remote_ip, port))
+        # if port == HTTPS_PORT:
+        #     context = ssl.create_default_context()
+        #     self.socket = context.wrap_socket(self.socket, server_hostname=host)
         return None
 
     def get_code(self, data):
@@ -98,7 +103,7 @@ class HTTPClient(object):
                 buffer.extend(part)
             else:
                 done = not part
-        return buffer.decode('ISO-8859-1')
+        return buffer.decode('utf-8')
 
     def GET(self, url, args=None):
         code = 500
@@ -107,15 +112,21 @@ class HTTPClient(object):
         # Parse url and extract host & path
         urlParse = urllib.parse.urlparse(url)
         host = urlParse.netloc
-        path = urlParse.path
+        domain = host
+        path = urlParse.path+"?"+urlParse.query
+        if len(path) == 1:
+            path = "/"
 
         # Extract port
-        port = self.get_host_port(host)
-        if port != PORT:
-            host = host.split(":")[0]
+        port = HTTP_PORT
+        if urlParse.scheme == "https":
+            port = HTTPS_PORT
+        else:
+            port = self.get_host_port(host)
+            domain = host.split(":")[0]
 
         # Attempt to start socket connection
-        if self.connect(host, port) == NOT_FOUND:
+        if self.connect(domain, port) == NOT_FOUND:
             return HTTPResponse(NOT_FOUND, body)
 
         # Send GET request with parsed info
@@ -126,12 +137,21 @@ class HTTPClient(object):
         # Handled received response
         response = self.recvall()
 
+        self.close()
+
         # Extract the necessary info
         headers = self.get_headers(response)
         code = self.get_code(headers)
         body = self.get_body(response)
 
-        self.close()
+
+        # Wasted 6 hrs on the below, so I'm leaving it here out of sheer spite.
+        # if code == 301 or code == 302:
+        #     matches = re.findall(r"(?<=[Ll]ocation: )\S+", response)
+        #     if len(matches) > 0:
+        #         newUrl = matches[0]
+        #         print(urllib.parse.urlparse(newUrl))
+        #         return self.GET(newUrl, args)
 
         return HTTPResponse(code, body)
 
@@ -140,30 +160,34 @@ class HTTPClient(object):
         body = ""
 
         if args != None:
-            args = json.dumps(args)
-        args = str(args)
+            args = urllib.parse.urlencode(args)
+        else:
+            args = ""
         argsLength = len(args)
 
         # Parse url and extract host & path
         urlParse = urllib.parse.urlparse(url)
         host = urlParse.netloc
-        path = urlParse.path
+        domain = host
+        path = urlParse.path+"?"+urlParse.query
+
 
         # Extract port
-        port = self.get_host_port(host)
-        if port != PORT:
-            host = host.split(":")[0]
+        port = HTTP_PORT
+        if urlParse.scheme == "https":
+            port = HTTPS_PORT
+        else:
+            port = self.get_host_port(host)
+            domain = host.split(":")[0]
 
         # Attempt to start socket connection
-        if self.connect(host, port) == NOT_FOUND:
+        if self.connect(domain, port) == NOT_FOUND:
             return HTTPResponse(NOT_FOUND, body)
 
         # Send POST request with parsed info & arguments
         httpHeader = f"POST {path} HTTP/1.1\r\nHost: {host}\r\n"
-        contentHeader = f"Content-Type: application/json\r\nAccept: aplication/json\r\nContent-Length: {argsLength}\r\n\r\n"
+        contentHeader = f"Content-type: application/x-www-form-urlencoded\r\nContent-length: {argsLength}\r\n\r\n"
         request = httpHeader + contentHeader + args
-
-        print(request)
 
         self.sendall(request)
         self.socket.shutdown(socket.SHUT_WR)
@@ -171,12 +195,17 @@ class HTTPClient(object):
         # Handled received response
         response = self.recvall()
 
+        self.close()
+
+        print(request)
+
         # Extract the necessary info
         headers = self.get_headers(response)
         code = self.get_code(headers)
-        body = json.loads(self.get_body(response))
+        body = self.get_body(response)
+        # print(request)
+        # print(response)
 
-        self.close()
 
         return HTTPResponse(code, body)
 
