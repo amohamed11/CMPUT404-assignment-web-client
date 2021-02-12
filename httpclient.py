@@ -24,6 +24,8 @@ import re
 # you may use urllib to encode data appropriately
 import urllib.parse
 
+PORT = 80
+
 def help():
     print("httpclient.py [GET/POST] [URL]\n")
 
@@ -37,39 +39,69 @@ class HTTPClient(object):
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(0.75)
         self.socket.connect((host, port))
         return None
 
     def get_code(self, data):
-        return None
+        httpHeader = data[0]
+        hSplit = httpHeader.split(' ')
+        code = hSplit[1]
+        return int(code)
 
     def get_headers(self,data):
-        return None
+        dataSplit = data.split("\r\n\r\n")
+        headers = dataSplit[0].split('\n')
+        return headers
 
     def get_body(self, data):
-        return None
-    
+        dataSplit = data.split("\r\n\r\n")
+        body = dataSplit[1]
+        return body
+
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
-        
+
     def close(self):
         self.socket.close()
 
     # read everything from the socket
-    def recvall(self, sock):
+    def recvall(self):
         buffer = bytearray()
         done = False
         while not done:
-            part = sock.recv(1024)
-            if (part):
+            try:
+                part = self.socket.recv(1024)
                 buffer.extend(part)
-            else:
-                done = not part
-        return buffer.decode('utf-8')
+            except socket.timeout as e:
+                done = True
+        return buffer.decode('ISO-8859-1')
 
     def GET(self, url, args=None):
         code = 500
         body = ""
+
+        # Parse url and extract host & path
+        urlParse = urllib.parse.urlparse(url)
+        host = urlParse.netloc
+        path = urlParse.path
+
+        # Start socket connection
+        self.connect(host, PORT)
+
+        # Send GET request with parsed info
+        request = f"GET {path} / HTTP/1.1\r\nHost: {host}\r\n\r\n"
+        self.sendall(request)
+
+        # Handled received response
+        response = self.recvall()
+
+        # Extract the necessary info
+        headers = self.get_headers(response)
+        code = self.get_code(headers)
+        body = self.get_body(response)
+        # print(f"headers: {headers}\ncode: {code}\nbody: {body}")
+
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
@@ -82,7 +114,7 @@ class HTTPClient(object):
             return self.POST( url, args )
         else:
             return self.GET( url, args )
-    
+
 if __name__ == "__main__":
     client = HTTPClient()
     command = "GET"
