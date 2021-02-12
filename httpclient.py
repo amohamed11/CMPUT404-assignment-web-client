@@ -24,7 +24,6 @@ import re
 # you may use urllib to encode data appropriately
 import urllib.parse
 import json
-import ssl
 
 HTTP_PORT = 80
 HTTPS_PORT = 443
@@ -64,9 +63,6 @@ class HTTPClient(object):
             return NOT_FOUND
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((remote_ip, port))
-        # if port == HTTPS_PORT:
-        #     context = ssl.create_default_context()
-        #     self.socket = context.wrap_socket(self.socket, server_hostname=host)
         return None
 
     def get_code(self, data):
@@ -196,8 +192,6 @@ class HTTPClient(object):
         response = self.recvall()
 
         self.close()
-
-        print(request)
 
         # Extract the necessary info
         headers = self.get_headers(response)
