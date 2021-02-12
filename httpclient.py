@@ -23,8 +23,22 @@ import socket
 import re
 # you may use urllib to encode data appropriately
 import urllib.parse
+import json
 
 PORT = 80
+
+NOT_FOUND = 404
+BAD_GATEWAY = 504
+
+
+# get host information
+def get_remote_ip(host):
+    try:
+        remote_ip = socket.gethostbyname(host)
+    except socket.gaierror:
+        return NOT_FOUND
+
+    return remote_ip
 
 def help():
     print("httpclient.py [GET/POST] [URL]\n")
@@ -35,22 +49,31 @@ class HTTPResponse(object):
         self.body = body
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
+    def get_host_port(self, url):
+        port = PORT
+        urlSplit = url.split(":")
+        if len(urlSplit) > 1:
+            port = int(urlSplit[1])
+        return port
 
     def connect(self, host, port):
+        remote_ip = get_remote_ip(host)
+        if remote_ip == NOT_FOUND:
+            return NOT_FOUND
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(0.75)
-        self.socket.connect((host, port))
+        self.socket.connect((remote_ip, port))
         return None
 
     def get_code(self, data):
         httpHeader = data[0]
         hSplit = httpHeader.split(' ')
+        if len(hSplit) < 2:
+            print("Data: ", data)
         code = hSplit[1]
         return int(code)
 
     def get_headers(self,data):
-        dataSplit = data.split("\r\n\r\n")
+        dataSplit = data.split("\r\n")
         headers = dataSplit[0].split('\n')
         return headers
 
@@ -70,11 +93,11 @@ class HTTPClient(object):
         buffer = bytearray()
         done = False
         while not done:
-            try:
-                part = self.socket.recv(1024)
+            part = self.socket.recv(1024)
+            if (part):
                 buffer.extend(part)
-            except socket.timeout as e:
-                done = True
+            else:
+                done = not part
         return buffer.decode('ISO-8859-1')
 
     def GET(self, url, args=None):
@@ -86,12 +109,19 @@ class HTTPClient(object):
         host = urlParse.netloc
         path = urlParse.path
 
-        # Start socket connection
-        self.connect(host, PORT)
+        # Extract port
+        port = self.get_host_port(host)
+        if port != PORT:
+            host = host.split(":")[0]
+
+        # Attempt to start socket connection
+        if self.connect(host, port) == NOT_FOUND:
+            return HTTPResponse(NOT_FOUND, body)
 
         # Send GET request with parsed info
-        request = f"GET {path} / HTTP/1.1\r\nHost: {host}\r\n\r\n"
+        request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n"
         self.sendall(request)
+        self.socket.shutdown(socket.SHUT_WR)
 
         # Handled received response
         response = self.recvall()
@@ -100,13 +130,54 @@ class HTTPClient(object):
         headers = self.get_headers(response)
         code = self.get_code(headers)
         body = self.get_body(response)
-        # print(f"headers: {headers}\ncode: {code}\nbody: {body}")
+
+        self.close()
 
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
         code = 500
         body = ""
+
+        if args != None:
+            args = json.dumps(args)
+        args = str(args)
+        argsLength = len(args)
+
+        # Parse url and extract host & path
+        urlParse = urllib.parse.urlparse(url)
+        host = urlParse.netloc
+        path = urlParse.path
+
+        # Extract port
+        port = self.get_host_port(host)
+        if port != PORT:
+            host = host.split(":")[0]
+
+        # Attempt to start socket connection
+        if self.connect(host, port) == NOT_FOUND:
+            return HTTPResponse(NOT_FOUND, body)
+
+        # Send POST request with parsed info & arguments
+        httpHeader = f"POST {path} HTTP/1.1\r\nHost: {host}\r\n"
+        contentHeader = f"Content-Type: application/json\r\nAccept: aplication/json\r\nContent-Length: {argsLength}\r\n\r\n"
+        request = httpHeader + contentHeader + args
+
+        print(request)
+
+        self.sendall(request)
+        self.socket.shutdown(socket.SHUT_WR)
+
+        # Handled received response
+        response = self.recvall()
+
+        # Extract the necessary info
+        headers = self.get_headers(response)
+        code = self.get_code(headers)
+        body = json.loads(self.get_body(response))
+
+        self.close()
+
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):
